@@ -1,0 +1,74 @@
+The cube game
+
+The main things players do in this game is building cubes and rolling them. The game is played 1v1.
+
+So we have a board, something like 5x5, I have not decided yet. The players take alternating turn.
+During their turn, player can either
+ - roll their cube
+ - start building a new cube
+ - add sides to a cube that is under construction
+
+The objective, well, I have not quite decided what that is. 
+Options / ideas
+ - invade more space than your opponent
+ - perform specific action at enemy "base"
+ - reach enemy base 
+
+So the cubes can be rolled, and they can be "builded" but what does that mean?
+My idea was, that you can add functionalities to each side of the cube, and they trigger, when 
+the side is facing up after moving the cube. Ideas for such mechanics:
+ - Slide forward / sideways / any direction
+ - Push: Slide adjacent friend / opponent one away straight / in any dir
+ - Fortify: cannot be moved by other effects / destroyed
+ - Grapple: bring cube next to this cube from specific / any direction
+ - Detonate: destroy any adjacent cubes (4 / 8 tiles) 
+ - Start: This does nothing, the cube has to start this side down (should this also have a stronger and weaker variant?)
+ - Rotate: roll or rotate in place / do both
+ - Power: If this face is facing up, the cube is allowed to move even if blocked in some direction. The cube that is blocking
+   this cube will slide to the movement of the direction. If there is no empty space,the power cube cannot move / the blocking 
+   cube is destroyed
+ - Build: Add a new effect or upgrade to an existing cube in docs / anywhere 
+
+Yeah so the idea is that for each effect, there is the weaker and the stronger variant. 
+The stronger variant can be obtained by building first the weaker one and then building over that
+
+notes about mechanics:
+ - Slide: you can only slide to an un-occupied space
+ - I have not yet decided if triggering the mechanics should be optional or mandatory. Maybe upgrading the starting side
+   could make it optional?
+
+I was thinking If there should be mechanics to limit the amount of cubes under construction / on the game board.
+Like there is a possible strategy, where you can just build some of the fortified cubes, and seal off part of the map like that.
+I am not sure if that is annoying, or if it should be a mechanic. Like one win condition could be "align cubes such that they
+seal off more than half of the map" or "connect two sides of the map with your cubes". Now that was not the main win-con I was 
+thinking about originally. Originally I was thinking like "Blow up your opponents starting squares". But like really, I would 
+have to create a demo, in order to see how common this is.
+
+
+Ok, so lets make a demo.
+
+x x 1 1 x
+o o o o o
+o o o o o
+o o o o o
+o o o o o
+o o o o o
+x 2 2 x x
+
+We could have a map like this, where the squares marked by 
+x are not accessable
+o are empty
+"1"/"2" are the docks of the players, where their cubes are deployed
+In addition, each player could have maybe like 2 spaces for building their cubes
+
+
+
+
+The pool of possible abilities is quite wide, but I suspect some will be better than others. 
+It would be boring if the player had just like cubes where everything is the same. It might 
+be a fun idea to limit the abilities somehow. For example:
+ - Same abilities cannot be adjacent upon launch
+ - You can have max 3 strength worth of the same ability on the battlefield
+ - You cannot launch a cube model that has already been launched
+ - You can only have max n cubes on the battlefield
+ - You can only build 8 cubes per game
