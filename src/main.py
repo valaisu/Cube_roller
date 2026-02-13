@@ -145,35 +145,74 @@ class Side:
         self.strength = strength
 
 class Cube:
+    # ok so I kinda think it would be good that these have a direction also. 
+    # I guess the simplest way is to define their rotation in relation to 
+    # 2D flattening. 
+    #   u
+    # l f r
+    #   d
+    #   b
+    # I don't remember if this is the flattening that was used in the GUI side
+    #  
     def __init__(self, owner=None):
         self.owner = owner
         self.u = Side()
+        self.u_rot = 0 # in degs
         self.b = Side()
+        self.b_rot = 0
         self.r = Side()
+        self.r_rot = 0
         self.l = Side()
+        self.l_rot = 0
         self.f = Side()
+        self.f_rot = 0
         self.d = Side()
+        self.d_rot = 0
+
+    # Ok then I need a mapping that outputs where each side is facing
 
     def roll(self, direction):
-        if direction == 'up':
+        if direction == (0, 1):#'up'
             self.u, self.f, self.d, self.b = self.f, self.d, self.b, self.u
-        elif direction == 'down':
+            # does not edit rot's
+        elif direction == (0, -1):#'down'
             self.u, self.b, self.d, self.f = self.b, self.d, self.f, self.u
-        elif direction == 'left':
-            self.u, self.l, self.d, self.r = self.r, self.u, self.l, self.d
-        elif direction == 'right':
-            self.u, self.r, self.d, self.l = self.l, self.u, self.r, self.d
+            # does not edit rot's
+        elif direction == (-1, 0):#'left'
+            self.l, self.f, self.r, self.b = self.f, self.r, self.b, self.l
+            self.l_rot, self.f_rot, self.r_rot, self.b_rot = \
+                self.f_rot, self.r_rot, (self.b_rot+180)%360, (self.l_rot+180)%360
+        elif direction == (1, 0):#'right'
+            self.l, self.f, self.r, self.b = self.b, self.l, self.f, self.r
+            self.l_rot, self.f_rot, self.r_rot, self.b_rot = \
+                (self.b_rot+180)%360, self.l_rot, self.f_rot, (self.r_rot+180)%360
 
-    def rotate(self, axis):
-        if axis == 'x':
-            self.f, self.r, self.b, self.l = self.l, self.f, self.r, self.b
-        elif axis == 'y':
-            self.u, self.r, self.d, self.l = self.l, self.u, self.r, self.d
-        elif axis == 'z':
-            self.u, self.f, self.d, self.b = self.b, self.u, self.f, self.d
+    #   u
+    # l f r
+    #   d
+    #   b
+    # <^>v
+    
+    def rotate(self, dir):
+        if dir == "cw":
+            self.u, self.l, self.d, self.r = self.l, self.d, self.r, self.u
+            self.u_rot, self.l_rot, self.d_rot, self.r_rot = \
+                (self.l_rot+90)%360, (self.d_rot+90)%360, (self.r_rot+90)%360, (self.u_rot+90)%360
+        elif dir == "ccw":
+            self.u, self.l, self.d, self.r = self.r, self.u, self.l, self.d
+            self.u_rot, self.l_rot, self.d_rot, self.r_rot = \
+                (self.r_rot-90)%360, (self.u_rot-90)%360, (self.l_rot-90)%360, (self.d_rot-90)%360
+        else:
+            print("sus rotation")
+
 
     def get_effect(self):
         return self.u.effect, self.u.strength
+
+    def get_effect_dir(self):
+        #         0       90      180      270
+        dirs = [(0, 1), (1, 0), (0, -1), (-1, 0)]
+        return dirs[int(self.u_rot/90)]
 
     def get_owner(self):
         return self.owner
