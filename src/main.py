@@ -1,4 +1,7 @@
+
+
 # Ok. So. we need the visuals, and we need the logic.
+
 
 # 
 #   u
@@ -29,7 +32,8 @@ dir_to_coords = {
     'right': (1, 0)
 }
 
-
+DIRS = [(0, 1), (1, 0), (0, -1), (-1, 0)]
+DIAGONAL_DIRS = [(1, 1), (1, -1), (-1, -1), (-1, 1)]
 
 # Rules:
 max_unfinished_cubes = 3
@@ -40,6 +44,9 @@ effects = ["slide", "push", "fortify", "grapple", "detonate", "start", "rotate",
 # ice: block landing in front / in any dir will slide forward before activating its ability
 # activate: Trigger the ability of the cube in front / in any dir
 # boost: cube landing next to / adjacent to this takes another turn
+
+def sum_tuples(a, b):
+    return tuple(x+y for x, y in zip(a, b))
 
 class Board:
     def __init__(self, width = 5, height = 7, exclusions=[0, 1, 4]):
@@ -72,7 +79,7 @@ class Board:
         self.grid[y + diff[1]][x + diff[0]] = self.grid[y][x]
         self.grid[y][x] = None
 
-    def roll_cube(self, x, y, direction, perform_action = True, action_dir = (0, 0)):
+    def roll_cube(self, x, y, direction, perform_action = True, action_dir = (0, 0), rotate_dir = None):
         # check that this action is legal beforehand
         diff = dir_to_coords.get(direction)
         cube = self.grid[y][x]
@@ -96,13 +103,55 @@ class Board:
         effect, strength = cube.get_effect()
         if effect == "slide": 
             # s=1 slide to direction if possible
+            if strength == 1:
+                slide_dir = cube.get_effect_dir()
             # s=2 slide to action_dir if possible
-            pass
+            elif strength == 2:
+                slide_dir = action_dir
+
+            if perform_action:
+                dest = sum_tuples((x, y), slide_dir)
+                if dest[0] < 0 or dest[0] >= self.width or dest[1] < 0 or dest[1] >= self.height:
+                    print("slide blocked by edge")
+                    return
+                if self.grid[dest[1]][dest[0]] is not None:
+                    print("slide blocked by cube")
+                    return
+                self.grid[dest[1]][dest[0]] = cube
+                self.grid[y][x] = None
+            return
+
         elif effect == "push":
-            # might have to rethink this
             # s=1 push next to blocks away from this
             # s=2 push next to blocks to any dir, deal 1 damage to ones that are blocked by other obstacles
-            pass
+            for dir in DIRS:
+                adj = sum_tuples((x, y), dir)
+                if adj[0] < 0 or adj[0] >= self.width or adj[1] < 0 or adj[1] >= self.height:
+                    continue
+                adj_cube = self.grid[adj[1]][adj[0]]
+                if isinstance(adj_cube, Cube):
+                    if adj_cube.get_effect()[0] == "fortify":
+                        print("push blocked by fortify")
+                        continue
+                    dest = sum_tuples(adj, dir)
+                    if dest[0] < 0 or dest[0] >= self.width or dest[1] < 0 or dest[1] >= self.height:
+                        if strength == 1:
+                            print("push blocked by edge")
+                            continue
+                        elif strength == 2:
+                            adj_cube.take_damage()
+                            continue
+                    if self.grid[dest[1]][dest[0]] is None:
+                        self.grid[dest[1]][dest[0]] = adj_cube
+                        self.grid[adj[1]][adj[0]] = None
+                    else:
+                        if strength == 1:
+                            print("push blocked by cube")
+                            continue
+                        elif strength == 2:
+                            adj_cube.take_damage()
+            return
+
         elif effect == "fortify":
             # s=1 cannot be moved by other effects
             # s=2 cannot be moved or destroyed by other effects
@@ -110,23 +159,109 @@ class Board:
         elif effect == "grapple":
             # s=1 move block from -dir next to this
             # s=2 move block from action_dir to next to this
-            pass
+            if not perform_action:
+                return
+            
+            if strength == 1:
+                grapple_dir = cube.get_effect_dir()
+            elif strength == 2:
+                grapple_dir = action_dir
+            
+            next_square = sum_tuples((x, y), grapple_dir)
+            grapple_square = sum_tuples((x, y), (grapple_dir))
+            # Find cube (if exist in grapple dir)
+            while True:
+                if grapple_square[0] < 0 or grapple_square[0] >= self.width or grapple_square[1] < 0 or grapple_square[1] >= self.height:
+                    print("grapple blocked by edge")
+                    return
+                if self.grid[grapple_square[1]][grapple_square[0]] is not None:
+                    break
+                grapple_square = sum_tuples(grapple_square, grapple_dir)
+            # Move cube
+            self.grid[next_square[1]][next_square[0]] = self.grid[grapple_square[1]][grapple_square[0]]
+            self.grid[grapple_square[1]][grapple_square[0]] = None
+
         elif effect == "detonate":
             # s=1 destroy this, adjacent cubes, and adjacent factories (4 squares)
             # s=2 destroy this, adjacent cubes, and adjacent factories (8 squares)
-            pass
+            if not perform_action:
+                return
+            
+            loop = DIRS
+            if strength == 2:
+                loop = DIRS + DIAGONAL_DIRS
+
+            for dir in loop:
+                adj = sum_tuples((x, y), dir)
+                if adj[0] < 0 or adj[0] >= self.width or adj[1] < 0 or adj[1] >= self.height:
+                    continue
+                adj_cube = self.grid[adj[1]][adj[0]]
+                if isinstance(adj_cube, Cube):
+                    if adj_cube.get_effect()[0] == "fortify" and adj_cube.get_effect()[1] == 2:
+                        print("detonate blocked by fortify")
+                        continue
+                    adj_cube.is_destroyed()
+
         elif effect == "start":
             # s=1 the cube has to start this side down
             # s=2 the cube has to start this side down. Triggering this cubes abilities is optional (during your turn?)
             pass
+
         elif effect == "rotate":
             # s=1 rotate this clock wise / counter clockwise
             # s=2 rotate this and adjacent cubes clock wise / counter clockwise (this moves the cubes. If a cube is moved to illegal square, it is destroyed)
-            pass
+            if not perform_action:
+                return
+            
+            cube.rotate(rotate_dir)
+            if strength == 2:
+                # rotate adjacent cubes AROUND THIS CUBE in rotate_dir
+                # if for any reason the square to which a cube is supposed to be rotated to is blocked, that cube is destroyed instead
+                blocked_squares = [] # out of bounds or fortified cubes
+                for dir in DIRS:
+                    adj = sum_tuples((x, y), dir)
+                    if adj[0] < 0 or adj[0] >= self.width or adj[1] < 0 or adj[1] >= self.height:
+                        blocked_squares.append(adj)
+                        continue
+                    adj_cube = self.grid[adj[1]][adj[0]]
+                    if isinstance(adj_cube, Cube):
+                        if adj_cube.get_effect()[0] == "fortify" and adj_cube.get_effect()[1] == 2:
+                            blocked_squares.append(adj)
+                            continue
+                # next, destroy cubes that are supposed to be rotated to blocked squares, and rotate the rest
+                for i in range(4):
+                    dest = sum_tuples((x, y), DIRS[i])
+                    if rotate_dir == "cw":
+                        source = sum_tuples((x, y), DIRS[(i-1)%4])
+                    elif rotate_dir == "ccw":
+                        source = sum_tuples((x, y), DIRS[(i+1)%4])
+                    
+                    if self.grid[source[1]][source[0]] is None:
+                        continue
+                    if dest in blocked_squares:
+                        if self.grid[source[1]][source[0]].get_effect()[0] != "fortify":
+                            self.grid[source[1]][source[0]].is_destroyed()
+                
+                # finally, move and the cubes, we know none will be destroyed in this step
+                dests = [sum_tuples((x, y), dir) for dir in DIRS]
+                if rotate_dir == "cw":
+                    sources = [sum_tuples((x, y), DIRS[(i-1)%4]) for i in range(4)]
+                elif rotate_dir == "ccw":
+                    sources = [sum_tuples((x, y), DIRS[(i+1)%4]) for i in range(4)]
+                
+                # we need to copy the cubes in order to rotate them without overwriting cubes that need to be rotated
+                cubes_to_rotate = [self.grid[source[1]][source[0]] for source in sources]
+                for i in range(4):
+                    if isinstance(cubes_to_rotate[i], Cube):
+                        self.grid[dests[i][1]][dests[i][0]] = cubes_to_rotate[i]
+                        self.grid[dests[i][1]][dests[i][0]].rotate(rotate_dir)
+                        self.grid[sources[i][1]][sources[i][0]] = None
+
         elif effect == "power":
             # s=1 if this is facing up before moving, the cube is allowed to slide the blocking cube to direction before moving, unless that cube is blocked
-            # s=2 if this is facing up before moving, the cube is allowed to slide the blocking cube to direction before moving. If the cube is blocked, it gets destroyed.
+            # s=2 if this is facing up before moving, the cube is allowed to slide the blocking cube to direction before moving. If the cube is blocked, it gets destroyed.            
             pass
+
         elif effect == "build":
             # s=1 the player can upgrade/add a side to a cube under construction
             # s=2 the player can upgrade/add a side to up to 2 distinct cubes under construction
@@ -135,7 +270,16 @@ class Board:
         elif effect == "slash":
             # s=1 deal one damage to the cube / empty factory in direction
             # s=2 deal one damage to all adjacent cubes / empty factories
-            pass
+            if strength == 1:
+                slash_dirs = [cube.get_effect_dir()]
+            elif strength == 2:
+                for dir in DIRS:
+                    target = sum_tuples((x, y), dir)
+                    if target[0] < 0 or target[0] >= self.width or target[1] < 0 or target[1] >= self.height:
+                        continue
+                    if self.grid[target[1]][target[0]] is not None:
+                        self.grid[target[1]][target[0]].take_damage()
+
 
         
 
@@ -154,7 +298,7 @@ class Cube:
     #   b
     # I don't remember if this is the flattening that was used in the GUI side
     #  
-    def __init__(self, owner=None):
+    def __init__(self, x, y, board, owner=None):
         self.owner = owner
         self.u = Side()
         self.u_rot = 0 # in degs
@@ -168,6 +312,14 @@ class Cube:
         self.f_rot = 0
         self.d = Side()
         self.d_rot = 0
+
+        self.x = x
+        self.y = y
+
+        self.under_construction = True
+        self.destroyed = False
+
+        self.board = board
 
     # Ok then I need a mapping that outputs where each side is facing
 
@@ -187,12 +339,6 @@ class Cube:
             self.l_rot, self.f_rot, self.r_rot, self.b_rot = \
                 (self.b_rot+180)%360, self.l_rot, self.f_rot, (self.r_rot+180)%360
 
-    #   u
-    # l f r
-    #   d
-    #   b
-    # <^>v
-    
     def rotate(self, dir):
         if dir == "cw":
             self.u, self.l, self.d, self.r = self.l, self.d, self.r, self.u
@@ -205,17 +351,35 @@ class Cube:
         else:
             print("sus rotation")
 
-
     def get_effect(self):
         return self.u.effect, self.u.strength
 
     def get_effect_dir(self):
-        #         0       90      180      270
-        dirs = [(0, 1), (1, 0), (0, -1), (-1, 0)]
-        return dirs[int(self.u_rot/90)]
+        return DIRS[int(self.u_rot/90)]
 
     def get_owner(self):
         return self.owner
+
+    def get_loc(self):
+        return (self.x, self.y)
+
+    def take_damage(self):
+        if self.u.strength == 2:
+            self.u.strength = 1
+        elif self.u.strength == 1:
+            self.u.effect = None
+            self.u.strength = 0
+        else:
+             self.is_destroyed()
+
+    def is_destroyed(self):
+        if self.u.effect == "fortify" and self.u.strength == 2:
+            print("fortify blocked destruction")
+            return
+        self.destroyed = True
+    
+    # TODO: consider adding a function for moving the cube. Would handle being blocked more cleanly
+
 
 class Player:
     def __init__(self, name):
