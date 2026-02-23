@@ -38,6 +38,27 @@ DIAGONAL_DIRS = [(1, 1), (1, -1), (-1, -1), (-1, 1)]
 # Rules:
 max_unfinished_cubes = 3
 effects = ["slide", "push", "fortify", "grapple", "detonate", "start", "rotate", "power", "build", "slash"]
+effect_shortnames = {
+    "slide": "sli",   
+    "push": "pus",
+    "fortify": "for",
+    "grapple": "grp",
+    "detonate": "det",
+    "start": "sta",
+    "rotate": "rot",
+    "power": "pwr",
+    "build": "bld",
+    "slash": "sla",
+    None: " - "
+}
+
+rot_symbols = {
+    0: ' ^',
+    90: ' >',
+    180: ' v',
+    270: ' <'
+}
+
 # other ideas: 
 # alert: damage anyone that moves next to this
 # glue: block in front / in any dir cannot move
@@ -52,19 +73,29 @@ class Board:
     def __init__(self, width = 5, height = 7, exclusions=[0, 1, 4]):
         self.width = width
         self.height = height
-        
+        factories = []
         self.grid = [[None for _ in range(width)] for _ in range(height)]
         first_row = [None for _ in range(width)]
         for ex in exclusions:
             first_row[ex] = 'X'
+        
         last_row = first_row.copy()[::-1]
         self.grid[0] = first_row
         self.grid[-1] = last_row
 
     def print_board(self):
         for row in self.grid:
-            print(' | '.join([' ' if cell is None else str(cell) for cell in row]))
+            for cell in row:
+                if cell is None:
+                    print(' ', end=' | ')
+                elif cell == 'X':
+                    print('X', end=' | ') 
+                elif isinstance(cell, Cube):
+                    print(cell.identifier, end=' | ')
+            print()
             print('-' * (self.width * 4 - 3))
+            #print(' | '.join([' ' if cell is None else str(cell) for cell in row]))
+            #print('-' * (self.width * 4 - 3))
 
     def slide_cube(self, x, y, direction):
         # check that this action is legal beforehand
@@ -72,11 +103,13 @@ class Board:
         if y + diff[1] < 0 or y + diff[1] >= self.height or x + diff[0] < 0 or x + diff[0] >= self.width:
             print("illegal move, roll out of bounds")
             return
-        if self.grid[y + diff[1]][x + diff[0]] is not None:
-            print("illegal move, slide")
+        if not isinstance(self.grid[y][x], Cube):
+            print("illegal move, not a cube")
             return
         
         self.grid[y + diff[1]][x + diff[0]] = self.grid[y][x]
+        self.grid[y + diff[1]][x + diff[0]].x = x + diff[0]
+        self.grid[y + diff[1]][x + diff[0]].y = y + diff[1]
         self.grid[y][x] = None
 
     def roll_cube(self, x, y, direction, perform_action = True, action_dir = (0, 0), rotate_dir = None):
@@ -86,16 +119,28 @@ class Board:
         if y + diff[1] < 0 or y + diff[1] >= self.height or x + diff[0] < 0 or x + diff[0] >= self.width:
             print("illegal move, roll out of bounds")
             return
-        if not cube is type(Cube):
+        if not isinstance(cube, Cube):
+            print("illegal move, not a cube")
             return
         if self.grid[y + diff[1]][x + diff[0]] is not None:
             if not cube.get_effect()[0] == "power":
                 print("illegal move, roll")
                 return
             # TODO: add power logic
+            behind_square = sum_tuples((x, y), (diff[0]*2, diff[1]*2))
+            if behind_square[0] < 0 or behind_square[0] >= self.width or behind_square[1] < 0 or behind_square[1] >= self.height:
+                if cube.get_effect()[1] == 1:
+                    print("illegal move, power blocked by edge")
+                    return
+                elif cube.get_effect()[1] == 2:
+                    print("power destroyed blocking cube against edge")
+                    self.grid[y + diff[1]][x + diff[0]].is_destroyed()
+                    cube.roll(direction)
             
         cube.roll(direction)
         self.grid[y + diff[1]][x + diff[0]] = cube
+        self.grid[y + diff[1]][x + diff[0]].x = x + diff[0]
+        self.grid[y + diff[1]][x + diff[0]].y = y + diff[1]
         self.grid[y][x] = None
 
         # Then, here all of the effects trigger, and we need to check if it was a legal move and what ever
@@ -110,7 +155,8 @@ class Board:
                 slide_dir = action_dir
 
             if perform_action:
-                dest = sum_tuples((x, y), slide_dir)
+                new_pos = (x + diff[0], y + diff[1])
+                dest = sum_tuples(new_pos, slide_dir)
                 if dest[0] < 0 or dest[0] >= self.width or dest[1] < 0 or dest[1] >= self.height:
                     print("slide blocked by edge")
                     return
@@ -118,7 +164,9 @@ class Board:
                     print("slide blocked by cube")
                     return
                 self.grid[dest[1]][dest[0]] = cube
-                self.grid[y][x] = None
+                self.grid[new_pos[1]][new_pos[0]] = None
+                cube.x = dest[0]
+                cube.y = dest[1]
             return
 
         elif effect == "push":
@@ -255,6 +303,8 @@ class Board:
                     if isinstance(cubes_to_rotate[i], Cube):
                         self.grid[dests[i][1]][dests[i][0]] = cubes_to_rotate[i]
                         self.grid[dests[i][1]][dests[i][0]].rotate(rotate_dir)
+                        self.grid[dests[i][1]][dests[i][0]].x = dests[i][0]
+                        self.grid[dests[i][1]][dests[i][0]].y = dests[i][1]
                         self.grid[sources[i][1]][sources[i][0]] = None
 
         elif effect == "power":
@@ -280,11 +330,15 @@ class Board:
                     if self.grid[target[1]][target[0]] is not None:
                         self.grid[target[1]][target[0]].take_damage()
 
+    def debug_print_cubes(self):
+        for row in self.grid:
+            for cell in row:
+                if isinstance(cell, Cube):
+                    cell.debug_unravel()
 
-        
 
 class Side:
-    def __init__(self, effect=None, strength=1):
+    def __init__(self, effect=None, strength=0):
         self.effect = effect
         self.strength = strength
 
@@ -298,7 +352,7 @@ class Cube:
     #   b
     # I don't remember if this is the flattening that was used in the GUI side
     #  
-    def __init__(self, x, y, board, owner=None):
+    def __init__(self, board, index, x=None, y=None, owner=None, identifier="1"):
         self.owner = owner
         self.u = Side()
         self.u_rot = 0 # in degs
@@ -313,15 +367,34 @@ class Cube:
         self.d = Side()
         self.d_rot = 0
 
+        self.index = index # not sure is this is actually used
+        self.identifier = identifier
+
         self.x = x
         self.y = y
 
         self.under_construction = True
         self.destroyed = False
-
+        self.deployable = False
         self.board = board
 
-    # Ok then I need a mapping that outputs where each side is facing
+
+    # TODO: I should to all of the cube moving here by default I think
+    def move(self, direction):
+        # check that this action is legal beforehand
+        diff = dir_to_coords.get(direction)
+        if self.y + diff[1] < 0 or self.y + diff[1] >= self.board.height or self.x + diff[0] < 0 or self.x + diff[0] >= self.board.width:
+            print("illegal move, roll out of bounds")
+            return
+        if self.board.grid[self.y + diff[1]][self.x + diff[0]] is not None:
+            # TODO: power
+            print("illegal move, roll")
+            return
+        
+        self.board.grid[self.y + diff[1]][self.x + diff[0]] = self
+        self.board.grid[self.y][self.x] = None
+        self.x += diff[0]
+        self.y += diff[1]
 
     def roll(self, direction):
         if direction == (0, 1):#'up'
@@ -363,6 +436,56 @@ class Cube:
     def get_loc(self):
         return (self.x, self.y)
 
+    def upgrade(self, side = "", effect = "", upgrade_rotation = 0):
+        # There's probably a smarter way to do this, oh well
+        if side == "u":
+            target = self.u
+        elif side == "d":
+            target = self.d
+        elif side == "f":
+            target = self.f
+        elif side == "b":
+            target = self.b
+        elif side == "l":
+            target = self.l
+        elif side == "r":
+            target = self.r
+        
+        if target.strength == 0:
+            print(f"upgrading {side} to {effect} with rotation {upgrade_rotation}")
+            #self.debug_unravel()
+            target.effect = effect
+            target.strength = 1
+            if side == "u":
+                self.u_rot = upgrade_rotation
+                print(f"effect dir: {self.u.effect}")
+            elif side == "d":
+                self.d_rot = upgrade_rotation
+                print(f"effect dir: {self.d.effect}")
+            elif side == "f":
+                self.f_rot = upgrade_rotation
+                print(f"effect dir: {self.f.effect}")
+            elif side == "b":
+                self.b_rot = upgrade_rotation
+                print(f"effect dir: {self.b.effect}")
+            elif side == "l":
+                self.l_rot = upgrade_rotation
+                print(f"effect dir: {self.l.effect}")
+            elif side == "r":
+                self.r_rot = upgrade_rotation
+                print(f"effect dir: {self.r.effect}")
+            
+            if effect == "start":
+                self.deployable = True
+
+        elif target.strength == 1:
+            print(f"upgrading {side} from {target.effect} to {effect} with rotation {upgrade_rotation}")
+            #self.debug_unravel()
+            target.strength = 2
+        else:
+            print("max upgrade reached already")
+            pass
+
     def take_damage(self):
         if self.u.strength == 2:
             self.u.strength = 1
@@ -378,24 +501,111 @@ class Cube:
             return
         self.destroyed = True
     
+    def debug_unravel(self):
+        """
+        Docstring for debug_unravel
+        
+        prints every side and their rotation indicated by <, ^, >, v for up, right, down, left respectively. 
+
+        """
+        u_e = effect_shortnames[self.u.effect]
+        l_e = effect_shortnames[self.l.effect]
+        f_e = effect_shortnames[self.f.effect]
+        r_e = effect_shortnames[self.r.effect]
+        d_e = effect_shortnames[self.d.effect]
+        b_e = effect_shortnames[self.b.effect]
+
+        u_r = rot_symbols[self.u_rot]
+        l_r = rot_symbols[self.l_rot]
+        f_r = rot_symbols[self.f_rot]
+        r_r = rot_symbols[self.r_rot]
+        d_r = rot_symbols[self.d_rot]
+        b_r = rot_symbols[self.b_rot]
+
+        print()
+        print(f"       -----     ")
+        print(f"      |{u_e}{u_r}|  ")
+        print(f"------|-----|-----")
+        print(f" {l_e}{l_r}|{f_e}{f_r}|{r_e}{r_r} ")
+        print(f"------|-----|-----")
+        print(f"      |{d_e}{d_r}|  ")
+        print(f"      |-----|     ")
+        print(f"      |{b_e}{b_r}|  ")
+        print(f"       -----     ")
+        print()
+
+
     # TODO: consider adding a function for moving the cube. Would handle being blocked more cleanly
 
 
 class Player:
-    def __init__(self, name):
+    def __init__(self, name, board, factories=[]):
         self.name = name
         self.cubes = []
+        self.board = board
+        self.factories = factories
+        for factory in factories:
+            self.board.grid[factory[1]][factory[0]] = 'X'
 
     def add_new_cube(self):
-        cube = Cube()
+        cube = Cube(self.board, len(self.cubes), owner=self.name)
         self.cubes.append(cube)
+
+    def deploy_cube(self, cube_index, x, y):
+        if (y, x) not in self.factories:
+            print("can only deploy on factory")
+            return
+        if cube_index >= len(self.cubes):
+            print("invalid cube index")
+            return
+        cube = self.cubes[cube_index]
+        if not cube.under_construction:
+            print("cube already deployed")
+            return
+        if self.board.grid[y][x] is not None:
+            print("cannot deploy on occupied square")
+            return
+        
+        self.board.grid[y][x] = cube
+        cube.x = x
+        cube.y = y
+        cube.under_construction = False
+
+    def upgrade_cube(self, cube_index, side, effect, upgrade_rotation = 0):
+        if cube_index >= len(self.cubes):
+            print("invalid cube index")
+            return
+        cube = self.cubes[cube_index]
+        if not cube.under_construction:
+            print("cube already deployed")
+            return
+        
+        cube.upgrade(side, effect, upgrade_rotation)
 
 
 def main():
-    p1 = Player("1")
-    p2 = Player("2")
     board = Board()
+    p1 = Player("1", board, factories=[(0, 1), (0, 2)])
+    p2 = Player("2", board, factories=[(6, 2), (6, 3)])
+    
+    p1.add_new_cube()
+    p1.upgrade_cube(0, "u", "slide", 90)
+    p1.upgrade_cube(0, "f", "start", 0)
+    p1.deploy_cube(0, 2, 0)
+    p2.add_new_cube()
+
     board.print_board()
+    print()
+    board.roll_cube(2, 0, "down", perform_action=True, action_dir=(0, 1))
+    board.print_board()
+    p1.cubes[0].debug_unravel()
+    print("---- all cubes ----")
+    board.debug_print_cubes()
+
+
+
+# Ok well where do we add the cubes?
+# maybe just give them to players
 
 if __name__ == "__main__":
     main()
