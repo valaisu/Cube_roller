@@ -135,9 +135,9 @@ class Board:
                 elif cube.get_effect()[1] == 2:
                     print("power destroyed blocking cube against edge")
                     self.grid[y + diff[1]][x + diff[0]].is_destroyed()
-                    cube.roll(direction)
-            
-        cube.roll(direction)
+                    cube.roll((diff[0], -diff[1]))
+
+        cube.roll((diff[0], -diff[1]))
         self.grid[y + diff[1]][x + diff[0]] = cube
         self.grid[y + diff[1]][x + diff[0]].x = x + diff[0]
         self.grid[y + diff[1]][x + diff[0]].y = y + diff[1]

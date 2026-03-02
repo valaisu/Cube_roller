@@ -3,3 +3,7 @@ tests.py
 panda3d_board.py
 panda3d_demo.py
 test_cube.py
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
