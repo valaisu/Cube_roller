@@ -8,12 +8,14 @@ import sys
 import random
 import os
 import math
+import glob
+import datetime
 
 from main import Board, Cube, Player, dir_to_coords
 from game_record import GameRecord
 
-# Absolute path to the save file — always relative to this script, not the CWD
-SAVE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'DB', 'game_record.json')
+# Absolute path to the DB folder — always relative to this script, not the CWD
+SAVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'DB')
 
 # Face name mapping between GUI and main.py logic
 FACE_GUI_TO_LOGIC = {'top': 'u', 'front': 'f', 'bottom': 'd', 'back': 'b', 'left': 'l', 'right': 'r'}
@@ -146,10 +148,13 @@ class CubeGameGUI(ShowBase):
         return True
 
     def _save_game_record(self):
-        """Save the current game record to DB/game_record.json (Ctrl+S)."""
-        self.game_record.save(SAVE_PATH)
-        self.info_label['text'] = "Game saved to DB/game_record.json"
-        print(f"[GameRecord] Saved {len(self.game_record.moves)} moves to {SAVE_PATH}")
+        """Save the current game record to a new timestamped file in DB/ (Ctrl+S)."""
+        ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f'game_{ts}.json'
+        path = os.path.join(SAVE_DIR, filename)
+        self.game_record.save(path)
+        self.info_label['text'] = f"Saved: {filename}"
+        print(f"[GameRecord] Saved {len(self.game_record.moves)} moves to {path}")
 
     def end_turn(self):
         """End current player's turn and switch to other player."""
@@ -1699,7 +1704,11 @@ class CubeGameGUI(ShowBase):
         self.left_panel.hide()
         self.panel.hide()
 
-        has_save = os.path.exists(SAVE_PATH)
+        saves = sorted(
+            glob.glob(os.path.join(SAVE_DIR, '*.json')),
+            key=os.path.getmtime,
+            reverse=True,
+        )[:6]
 
         self._startup_menu = DirectFrame(
             frameColor=(0.08, 0.08, 0.12, 1.0),
@@ -1708,54 +1717,64 @@ class CubeGameGUI(ShowBase):
 
         DirectLabel(
             text="CUBE ROLLER",
-            text_scale=0.18,
+            text_scale=0.15,
             text_fg=(1, 1, 1, 1),
             text_align=TextNode.ACenter,
             frameColor=(0, 0, 0, 0),
-            pos=(0, 0, 0.28),
+            pos=(0, 0, 0.72),
             parent=self._startup_menu,
         )
-
-        btn_w = 0.38
-        btn_frame = (-btn_w, btn_w, -0.065, 0.065)
 
         DirectButton(
             text="New Game",
             text_scale=0.075,
             text_fg=(1, 1, 1, 1),
             frameColor=(0.3, 0.4, 0.5, 1),
-            frameSize=btn_frame,
-            pos=(0, 0, 0.05),
+            frameSize=(-0.38, 0.38, -0.065, 0.065),
+            pos=(0, 0, 0.52),
             command=self._on_new_game,
             parent=self._startup_menu,
             rolloverSound=None,
             clickSound=None,
         )
 
-        replay_btn = DirectButton(
-            text="Load Replay",
-            text_scale=0.075,
-            text_fg=(1, 1, 1, 1),
-            frameColor=(0.3, 0.4, 0.5, 1) if has_save else (0.18, 0.22, 0.28, 1),
-            frameSize=btn_frame,
-            pos=(0, 0, -0.12),
-            command=self._on_load_replay,
+        DirectLabel(
+            text="─── SAVED GAMES ───",
+            text_scale=0.05,
+            text_fg=(0.5, 0.5, 0.5, 1),
+            text_align=TextNode.ACenter,
+            frameColor=(0, 0, 0, 0),
+            pos=(0, 0, 0.34),
             parent=self._startup_menu,
-            rolloverSound=None,
-            clickSound=None,
         )
-        if not has_save:
-            replay_btn['state'] = DGG.DISABLED
-            replay_btn.setColorScale(0.45, 0.45, 0.45, 0.65)
+
+        if not saves:
             DirectLabel(
-                text="(no save found in DB/)",
-                text_scale=0.048,
-                text_fg=(0.45, 0.45, 0.45, 1),
+                text="No saved games found in DB/",
+                text_scale=0.055,
+                text_fg=(0.4, 0.4, 0.4, 1),
                 text_align=TextNode.ACenter,
                 frameColor=(0, 0, 0, 0),
-                pos=(0, 0, -0.22),
+                pos=(0, 0, 0.18),
                 parent=self._startup_menu,
             )
+        else:
+            for i, path in enumerate(saves):
+                name = os.path.splitext(os.path.basename(path))[0]
+                y = 0.20 - i * 0.16
+                DirectButton(
+                    text=name,
+                    text_scale=0.055,
+                    text_fg=(1, 1, 1, 1),
+                    frameColor=(0.22, 0.30, 0.38, 1),
+                    frameSize=(-0.58, 0.58, -0.055, 0.055),
+                    pos=(0, 0, y),
+                    command=self._on_load_replay,
+                    extraArgs=[path],
+                    parent=self._startup_menu,
+                    rolloverSound=None,
+                    clickSound=None,
+                )
 
     def _on_new_game(self):
         self._startup_menu.hide()
@@ -1763,8 +1782,7 @@ class CubeGameGUI(ShowBase):
         self.panel.show()
         self.info_label['text'] = "Player 1's turn"
 
-    def _on_load_replay(self):
-        path = SAVE_PATH
+    def _on_load_replay(self, path):
         try:
             self.playback_record = GameRecord.load(path)
         except Exception as e:
