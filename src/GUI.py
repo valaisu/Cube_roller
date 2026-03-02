@@ -10,6 +10,10 @@ import os
 import math
 
 from main import Board, Cube, Player, dir_to_coords
+from game_record import GameRecord
+
+# Absolute path to the save file — always relative to this script, not the CWD
+SAVE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'DB', 'game_record.json')
 
 # Face name mapping between GUI and main.py logic
 FACE_GUI_TO_LOGIC = {'top': 'u', 'front': 'f', 'bottom': 'd', 'back': 'b', 'left': 'l', 'right': 'r'}
@@ -74,6 +78,8 @@ class CubeGameGUI(ShowBase):
         self.player2 = Player("2", self.board, factories=[])
         self.player2.factories = [(6, 1), (6, 2)]   # (y, x) tuples: row 6, cols 1 and 2
 
+        self.game_record = GameRecord(self.player1.factories, self.player2.factories)
+
         self.deploy_mode = False
         self.deploy_cube_index = None
         self.rolling = False
@@ -112,6 +118,13 @@ class CubeGameGUI(ShowBase):
         self.taskMgr.add(self._process_pending_deselect, 'process_pending_deselect', sort=200)
         self._update_action_buttons()
 
+        # Playback state
+        self.playback_mode = False
+        self.playback_record = None
+        self.playback_index = 0
+
+        self._show_startup_menu()
+
     # ─── Game Logic Helpers ──────────────────────────────────────────────────
 
     def cube_to_icon_list(self, cube):
@@ -131,6 +144,12 @@ class CubeGameGUI(ShowBase):
         if self.board.grid[ny][nx] is not None:
             return False
         return True
+
+    def _save_game_record(self):
+        """Save the current game record to DB/game_record.json (Ctrl+S)."""
+        self.game_record.save(SAVE_PATH)
+        self.info_label['text'] = "Game saved to DB/game_record.json"
+        print(f"[GameRecord] Saved {len(self.game_record.moves)} moves to {SAVE_PATH}")
 
     def end_turn(self):
         """End current player's turn and switch to other player."""
@@ -334,6 +353,7 @@ class CubeGameGUI(ShowBase):
         """Setup keyboard and mouse controls"""
         self.accept('mouse1', self.on_mouse_click)
         self.accept('escape', sys.exit)
+        self.accept('control-s', self._save_game_record)
         self.accept('r', self.reset_camera)
         self.accept('arrow_left', self.rotate_left)
         self.accept('arrow_right', self.rotate_right)
@@ -383,6 +403,7 @@ class CubeGameGUI(ShowBase):
         slot_width = panel_width / 3
         slot_half = slot_width / 2
         silhouette_scale = slot_width * 0.85 / (4 * 0.08)
+        self.silhouette_scale = silhouette_scale
         face_size = 0.08 * silhouette_scale
 
         # Open (under-construction) slot counts per player
@@ -591,6 +612,60 @@ class CubeGameGUI(ShowBase):
             parent=self.panel
         )
 
+        # ── Playback controls (hidden during normal play) ─────────────────────
+        self.playback_frame = DirectFrame(
+            frameColor=(0, 0, 0, 0),
+            frameSize=(-button_width * 1.1, button_width * 1.1, -0.55, 0.12),
+            pos=(RIGHT_PANEL_CENTER, 0, -0.2),
+            parent=self.panel,
+        )
+        self.playback_frame.hide()
+
+        DirectLabel(
+            text="REPLAY MODE",
+            text_scale=right_panel_width * 0.065,
+            text_fg=(0.9, 0.7, 0.2, 1),
+            text_align=TextNode.ACenter,
+            frameColor=(0, 0, 0, 0),
+            pos=(0, 0, 0.04),
+            parent=self.playback_frame,
+        )
+        self.playback_pos_label = DirectLabel(
+            text="Step 0 / 0",
+            text_scale=right_panel_width * 0.065,
+            text_fg=(0.8, 0.8, 0.8, 1),
+            text_align=TextNode.ACenter,
+            frameColor=(0, 0, 0, 0),
+            pos=(0, 0, -0.10),
+            parent=self.playback_frame,
+        )
+        hbw = button_width * 0.47
+        bx  = button_width * 0.52
+        DirectButton(
+            text="◀ Prev",
+            text_scale=right_panel_width * 0.058,
+            text_fg=(1, 1, 1, 1),
+            frameColor=(0.3, 0.4, 0.5, 1),
+            frameSize=(-hbw, hbw, -0.04, 0.04),
+            pos=(-bx, 0, -0.27),
+            command=self._playback_prev,
+            parent=self.playback_frame,
+            rolloverSound=None,
+            clickSound=None,
+        )
+        DirectButton(
+            text="Next ▶",
+            text_scale=right_panel_width * 0.058,
+            text_fg=(1, 1, 1, 1),
+            frameColor=(0.3, 0.4, 0.5, 1),
+            frameSize=(-hbw, hbw, -0.04, 0.04),
+            pos=(bx, 0, -0.27),
+            command=self._playback_next,
+            parent=self.playback_frame,
+            rolloverSound=None,
+            clickSound=None,
+        )
+
     # ─── Mouse / Selection ───────────────────────────────────────────────────
 
     def on_mouse_click(self):
@@ -679,6 +754,12 @@ class CubeGameGUI(ShowBase):
                     })
                     self.deploy_mode = False
                     self.deploy_cube_index = None
+                    self.game_record.record(
+                        self.current_player, 'deploy',
+                        cube_index=cube_idx,
+                        pos_x=grid_x,
+                        pos_y=grid_y,
+                    )
                     self.end_turn()
                 else:
                     self.info_label['text'] = "Spawn square is occupied!"
@@ -779,6 +860,8 @@ class CubeGameGUI(ShowBase):
     def on_deploy_cube(self):
         """Enter deploy mode for the selected deployable cube."""
         self._gui_button_clicked = True
+        if self.playback_mode:
+            return
         player = self.player1 if self.current_player == 1 else self.player2
         sel_idx = self.selected_p1_cube if self.current_player == 1 else self.selected_p2_cube
         if (sel_idx is not None
@@ -1256,6 +1339,13 @@ class CubeGameGUI(ShowBase):
                     cube_data['board_pos'] = (new_x, new_y)
                     self.rolling = True
                     self.hide_roll_menu()
+                    self.game_record.record(
+                        self.current_player, 'roll',
+                        pos_x=x,
+                        pos_y=y,
+                        direction=direction,
+                        trigger_ability=self.ability_triggered,
+                    )
 
                     def on_roll_done():
                         self.rolling = False
@@ -1278,6 +1368,8 @@ class CubeGameGUI(ShowBase):
     def on_roll_cube(self):
         """Handle roll cube button"""
         self._gui_button_clicked = True
+        if self.playback_mode:
+            return
         if self.selected_cube:
             self.info_label['text'] = "Select roll direction"
             self.show_roll_menu()
@@ -1484,6 +1576,13 @@ class CubeGameGUI(ShowBase):
                 self.display_flattened_cube(container, {'logic': cube_logic}, scale=sil_scale)
                 self.display_unfolded_cube({'logic': cube_logic})
                 self.hide_add_side_menu()
+                self.game_record.record(
+                    self.current_player, 'add_side',
+                    cube_index=cube_idx,
+                    face=logic_face,
+                    effect=self.selected_effect,
+                    rotation=self.selected_rotation_deg,
+                )
                 self.end_turn()
 
         elif effect_name == "cancel":
@@ -1496,6 +1595,8 @@ class CubeGameGUI(ShowBase):
     def on_build_cube(self):
         """Build a new cube under construction (costs a turn)"""
         self._gui_button_clicked = True
+        if self.playback_mode:
+            return
         player = self.player1 if self.current_player == 1 else self.player2
         open_slots = self.player1_open_slots if self.current_player == 1 else self.player2_open_slots
 
@@ -1522,11 +1623,14 @@ class CubeGameGUI(ShowBase):
             sil_scale = slot_width * 0.85 / (4 * 0.08)
             self.display_flattened_cube(self.player2_cube_containers[idx], None, scale=sil_scale)
 
+        self.game_record.record(self.current_player, 'build', cube_index=idx)
         self.end_turn()
 
     def on_add_side(self):
         """Handle add side button"""
         self._gui_button_clicked = True
+        if self.playback_mode:
+            return
         if self.selected_p1_cube is not None or self.selected_p2_cube is not None:
             self.show_add_side_menu()
         else:
@@ -1535,6 +1639,9 @@ class CubeGameGUI(ShowBase):
     def on_end_turn(self):
         """Handle end turn button"""
         self._gui_button_clicked = True
+        if self.playback_mode:
+            return
+        self.game_record.record(self.current_player, 'end_turn')
         self.end_turn()
 
     # ─── Camera Controls ─────────────────────────────────────────────────────
@@ -1583,6 +1690,252 @@ class CubeGameGUI(ShowBase):
 
         lens = self.cam.node().getLens()
         lens.setFilmOffset(0, 0)
+
+
+    # ─── Startup Menu ────────────────────────────────────────────────────────
+
+    def _show_startup_menu(self):
+        """Show the startup menu overlay and hide the game panels."""
+        self.left_panel.hide()
+        self.panel.hide()
+
+        has_save = os.path.exists(SAVE_PATH)
+
+        self._startup_menu = DirectFrame(
+            frameColor=(0.08, 0.08, 0.12, 1.0),
+            frameSize=(SCREEN_LEFT, SCREEN_RIGHT, -1, 1),
+        )
+
+        DirectLabel(
+            text="CUBE ROLLER",
+            text_scale=0.18,
+            text_fg=(1, 1, 1, 1),
+            text_align=TextNode.ACenter,
+            frameColor=(0, 0, 0, 0),
+            pos=(0, 0, 0.28),
+            parent=self._startup_menu,
+        )
+
+        btn_w = 0.38
+        btn_frame = (-btn_w, btn_w, -0.065, 0.065)
+
+        DirectButton(
+            text="New Game",
+            text_scale=0.075,
+            text_fg=(1, 1, 1, 1),
+            frameColor=(0.3, 0.4, 0.5, 1),
+            frameSize=btn_frame,
+            pos=(0, 0, 0.05),
+            command=self._on_new_game,
+            parent=self._startup_menu,
+            rolloverSound=None,
+            clickSound=None,
+        )
+
+        replay_btn = DirectButton(
+            text="Load Replay",
+            text_scale=0.075,
+            text_fg=(1, 1, 1, 1),
+            frameColor=(0.3, 0.4, 0.5, 1) if has_save else (0.18, 0.22, 0.28, 1),
+            frameSize=btn_frame,
+            pos=(0, 0, -0.12),
+            command=self._on_load_replay,
+            parent=self._startup_menu,
+            rolloverSound=None,
+            clickSound=None,
+        )
+        if not has_save:
+            replay_btn['state'] = DGG.DISABLED
+            replay_btn.setColorScale(0.45, 0.45, 0.45, 0.65)
+            DirectLabel(
+                text="(no save found in DB/)",
+                text_scale=0.048,
+                text_fg=(0.45, 0.45, 0.45, 1),
+                text_align=TextNode.ACenter,
+                frameColor=(0, 0, 0, 0),
+                pos=(0, 0, -0.22),
+                parent=self._startup_menu,
+            )
+
+    def _on_new_game(self):
+        self._startup_menu.hide()
+        self.left_panel.show()
+        self.panel.show()
+        self.info_label['text'] = "Player 1's turn"
+
+    def _on_load_replay(self):
+        path = SAVE_PATH
+        try:
+            self.playback_record = GameRecord.load(path)
+        except Exception as e:
+            print(f"[Replay] Failed to load {path}: {e}")
+            return
+        self.playback_mode = True
+        self.playback_index = 0
+        self._startup_menu.hide()
+        self.left_panel.show()
+        self.panel.show()
+        self._set_playback_ui_visible(True)
+        self._rebuild_game_state(0)
+        self._update_playback_label()
+
+    # ─── Playback ────────────────────────────────────────────────────────────
+
+    def _set_playback_ui_visible(self, visible):
+        """Swap action buttons for playback controls (or vice versa)."""
+        for btn in self.action_buttons:
+            btn.hide() if visible else btn.show()
+        self.playback_frame.show() if visible else self.playback_frame.hide()
+
+    def _update_playback_label(self):
+        total = len(self.playback_record.moves)
+        idx = self.playback_index
+        self.playback_pos_label['text'] = f"Step {idx} / {total}"
+        if idx == 0:
+            self.info_label['text'] = "[Replay] Initial state"
+        else:
+            m = self.playback_record.moves[idx - 1]
+            self.info_label['text'] = f"[Replay] {self._move_description(m)}"
+
+    def _move_description(self, move):
+        p = f"P{move.player}"
+        t = move.move_type
+        if t == 'build':
+            return f"{p} built cube #{move.cube_index}"
+        if t == 'add_side':
+            return f"{p} added {move.effect} on {move.face}"
+        if t == 'deploy':
+            return f"{p} deployed to ({move.pos_x},{move.pos_y})"
+        if t == 'roll':
+            ab = " +ability" if move.trigger_ability else ""
+            return f"{p} rolled {move.direction}{ab}"
+        if t == 'end_turn':
+            return f"{p} ended turn"
+        return f"{p} {t}"
+
+    def _playback_prev(self):
+        if self.playback_index > 0:
+            self.playback_index -= 1
+            self._rebuild_game_state(self.playback_index)
+            self._update_playback_label()
+
+    def _playback_next(self):
+        if self.playback_record and self.playback_index < len(self.playback_record.moves):
+            self.playback_index += 1
+            self._rebuild_game_state(self.playback_index)
+            self._update_playback_label()
+
+    def _rebuild_game_state(self, n):
+        """Reset to initial game state then apply the first n recorded moves."""
+        # Remove all deployed 3D cubes from the scene
+        for cube_data in self.cubes:
+            cube_data['node'].removeNode()
+        self.cubes = []
+
+        # Recreate logic objects
+        self.board = Board(width=5, height=7, exclusions=[0, 1, 4])
+        self.player1 = Player("1", self.board, factories=[])
+        self.player1.factories = [(0, 2), (0, 3)]
+        self.player2 = Player("2", self.board, factories=[])
+        self.player2.factories = [(6, 1), (6, 2)]
+
+        # Pre-populate initial construction slots (same as __init__)
+        self.player1_open_slots = PLAYER_START_OPEN_CUBES
+        self.player2_open_slots = PLAYER_START_OPEN_CUBES
+        for _ in range(PLAYER_START_OPEN_CUBES):
+            self.player1.add_new_cube()
+            self.player2.add_new_cube()
+
+        # Reset slot colours and silhouettes
+        for i in range(3):
+            open1 = i < self.player1_open_slots
+            open2 = i < self.player2_open_slots
+            self.player1_cube_slots[i]['frameColor'] = (0.08, 0.08, 0.1, 1.0) if open1 else (0.04, 0.04, 0.05, 1.0)
+            self.player2_cube_slots[i]['frameColor'] = (0.08, 0.08, 0.1, 1.0) if open2 else (0.04, 0.04, 0.05, 1.0)
+            if open1:
+                self.display_flattened_cube(self.player1_cube_containers[i], {'logic': self.player1.cubes[i]}, scale=self.silhouette_scale)
+            else:
+                for child in self.player1_cube_containers[i].getChildren():
+                    child.removeNode()
+            if open2:
+                self.display_flattened_cube(self.player2_cube_containers[i], {'logic': self.player2.cubes[i]}, scale=self.silhouette_scale)
+            else:
+                for child in self.player2_cube_containers[i].getChildren():
+                    child.removeNode()
+
+        # Reset selection / menu state
+        self.selected_p1_cube = None
+        self.selected_p2_cube = None
+        self.selected_cube = None
+        self.deploy_mode = False
+        self.deploy_cube_index = None
+        self.hide_roll_menu()
+        self.hide_add_side_menu()
+        self.clear_unfolded_cube()
+
+        # Reset turn to player 1
+        self.current_player = 1
+        self.set_current_player(1)
+
+        # Apply the first n recorded moves
+        for move in self.playback_record.moves[:n]:
+            self._apply_move(move)
+
+        self.update_cube_counters(len(self.player1.cubes), len(self.player2.cubes))
+        self._update_action_buttons()
+
+    def _apply_move(self, move):
+        """Apply one recorded move to the live game state (no animation)."""
+        player = self.player1 if move.player == 1 else self.player2
+        self.current_player = move.player
+
+        if move.move_type == 'build':
+            player.add_new_cube()
+            idx = move.cube_index
+            if move.player == 1:
+                self.player1_open_slots = max(self.player1_open_slots, idx + 1)
+                self.player1_cube_slots[idx]['frameColor'] = (0.08, 0.08, 0.1, 1.0)
+                self.display_flattened_cube(self.player1_cube_containers[idx], None, scale=self.silhouette_scale)
+            else:
+                self.player2_open_slots = max(self.player2_open_slots, idx + 1)
+                self.player2_cube_slots[idx]['frameColor'] = (0.08, 0.08, 0.1, 1.0)
+                self.display_flattened_cube(self.player2_cube_containers[idx], None, scale=self.silhouette_scale)
+
+        elif move.move_type == 'add_side':
+            player.upgrade_cube(move.cube_index, move.face, move.effect, move.rotation)
+            cube_logic = player.cubes[move.cube_index]
+            containers = self.player1_cube_containers if move.player == 1 else self.player2_cube_containers
+            self.display_flattened_cube(containers[move.cube_index], {'logic': cube_logic}, scale=self.silhouette_scale)
+
+        elif move.move_type == 'deploy':
+            idx = move.cube_index
+            self._orient_cube_for_deploy(player.cubes[idx])
+            player.deploy_cube(idx, move.pos_x, move.pos_y)
+            cube_logic = player.cubes[idx]
+            cube_node, face_nodes = self.create_cube(move.pos_x, move.pos_y, cube_logic)
+            self.cubes.append({
+                'node': cube_node,
+                'board_pos': (move.pos_x, move.pos_y),
+                'logic': cube_logic,
+                'face_nodes': face_nodes,
+            })
+
+        elif move.move_type == 'roll':
+            self.board.roll_cube(move.pos_x, move.pos_y, move.direction,
+                                 perform_action=move.trigger_ability)
+            dx, dy = dir_to_coords[move.direction]
+            new_x, new_y = move.pos_x + dx, move.pos_y + dy
+            cube_data = next((c for c in self.cubes if c['board_pos'] == (move.pos_x, move.pos_y)), None)
+            if cube_data:
+                cube_data['board_pos'] = (new_x, new_y)
+                world_x = (new_x - self.board_dim[0] / 2) * 1.1
+                world_y = (new_y - self.board_dim[1] / 2) * 1.1
+                cube_data['node'].setPos(world_x, world_y, 0.45)
+                self.update_cube_face_textures(cube_data)
+
+        # Every move ends the turn — advance to the next player
+        next_player = 2 if move.player == 1 else 1
+        self.set_current_player(next_player)
 
 
 if __name__ == '__main__':
