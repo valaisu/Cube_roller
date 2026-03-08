@@ -3,12 +3,12 @@
 # Ok. So. we need the visuals, and we need the logic.
 
 
-# 
-#   u
-# l b r
-#   d
+#
+#   b
+# l u r
 #   f
-# 
+#   d
+#
 """
 EFFECTS:
 
@@ -32,7 +32,7 @@ dir_to_coords = {
     'right': (1, 0)
 }
 
-DIRS = [(0, 1), (1, 0), (0, -1), (-1, 0)]
+DIRS = [(0, -1), (1, 0), (0, 1), (-1, 0)]  # 0=up, 90=right, 180=down, 270=left
 DIAGONAL_DIRS = [(1, 1), (1, -1), (-1, -1), (-1, 1)]
 
 # Rules:
@@ -346,22 +346,22 @@ class Cube:
     # ok so I kinda think it would be good that these have a direction also. 
     # I guess the simplest way is to define their rotation in relation to 
     # 2D flattening. 
-    #   u
-    # l f r
-    #   d
     #   b
-    # I don't remember if this is the flattening that was used in the GUI side
+    # l u r
+    #   f
+    #   d
+    # This matches the GUI display.
     #  
     def __init__(self, board, index, x=None, y=None, owner=None, identifier="1"):
         self.owner = owner
-        self.u = Side()
-        self.u_rot = 0 # in degs
         self.b = Side()
         self.b_rot = 0
-        self.r = Side()
-        self.r_rot = 0
         self.l = Side()
         self.l_rot = 0
+        self.u = Side()
+        self.u_rot = 0 # in degs
+        self.r = Side()
+        self.r_rot = 0
         self.f = Side()
         self.f_rot = 0
         self.d = Side()
@@ -397,30 +397,38 @@ class Cube:
         self.y += diff[1]
 
     def roll(self, direction):
-        if direction == (0, 1):#'up'
+        # Ok I think this might now be fixed...
+        if direction == (0, 1):#'down' (board y increases)
             self.u, self.f, self.d, self.b = self.f, self.d, self.b, self.u
-            # does not edit rot's
-        elif direction == (0, -1):#'down'
+            self.r_rot, self.l_rot = (self.r_rot+90)%360, (self.l_rot-90)%360 # rotate sides!
+        elif direction == (0, -1):#'up' (board y decreases)
             self.u, self.b, self.d, self.f = self.b, self.d, self.f, self.u
-            # does not edit rot's
+            self.r_rot, self.l_rot = (self.r_rot-90)%360, (self.l_rot+90)%360
         elif direction == (-1, 0):#'left'
-            self.l, self.f, self.r, self.b = self.f, self.r, self.b, self.l
-            self.l_rot, self.f_rot, self.r_rot, self.b_rot = \
-                self.f_rot, self.r_rot, (self.b_rot+180)%360, (self.l_rot+180)%360
+            # u l d r cycle
+            self.u, self.l, self.d, self.r = self.r, self.u, self.l, self.d 
+            self.u_rot, self.l_rot, self.d_rot, self.r_rot = \
+                self.r_rot, self.u_rot, (self.l_rot+180)%360, (self.d_rot+180)%360
+            self.f_rot, self.b_rot = (self.f_rot-90)%360, (self.b_rot+90)%360
+
         elif direction == (1, 0):#'right'
-            self.l, self.f, self.r, self.b = self.b, self.l, self.f, self.r
-            self.l_rot, self.f_rot, self.r_rot, self.b_rot = \
-                (self.b_rot+180)%360, self.l_rot, self.f_rot, (self.r_rot+180)%360
+            # u r d l cycle
+            self.u, self.r, self.d, self.l = self.l, self.u, self.r, self.d
+            self.u_rot, self.r_rot, self.d_rot, self.l_rot = \
+                self.l_rot, self.u_rot, (self.r_rot+180)%360, (self.d_rot+180)%360
+            self.f_rot, self.b_rot = (self.f_rot+90)%360, (self.b_rot-90)%360
 
     def rotate(self, dir):
         if dir == "cw":
-            self.u, self.l, self.d, self.r = self.l, self.d, self.r, self.u
-            self.u_rot, self.l_rot, self.d_rot, self.r_rot = \
-                (self.l_rot+90)%360, (self.d_rot+90)%360, (self.r_rot+90)%360, (self.u_rot+90)%360
+            # b r f l cycle (north→east→south→west)
+            self.b, self.r, self.f, self.l = self.l, self.b, self.r, self.f
+            self.b_rot, self.r_rot, self.f_rot, self.l_rot = \
+                (self.l_rot+90)%360, (self.b_rot+90)%360, (self.r_rot+90)%360, (self.f_rot+90)%360
         elif dir == "ccw":
-            self.u, self.l, self.d, self.r = self.r, self.u, self.l, self.d
-            self.u_rot, self.l_rot, self.d_rot, self.r_rot = \
-                (self.r_rot-90)%360, (self.u_rot-90)%360, (self.l_rot-90)%360, (self.d_rot-90)%360
+            # b l f r cycle (north→west→south→east)
+            self.b, self.l, self.f, self.r = self.r, self.b, self.l, self.f
+            self.b_rot, self.l_rot, self.f_rot, self.r_rot = \
+                (self.r_rot-90)%360, (self.b_rot-90)%360, (self.l_rot-90)%360, (self.f_rot-90)%360
         else:
             print("sus rotation")
 
@@ -524,13 +532,13 @@ class Cube:
 
         print()
         print(f"       -----     ")
-        print(f"      |{u_e}{u_r}|  ")
-        print(f"------|-----|-----")
-        print(f" {l_e}{l_r}|{f_e}{f_r}|{r_e}{r_r} ")
-        print(f"------|-----|-----")
-        print(f"      |{d_e}{d_r}|  ")
-        print(f"      |-----|     ")
         print(f"      |{b_e}{b_r}|  ")
+        print(f"------|-----|-----")
+        print(f" {l_e}{l_r}|{u_e}{u_r}|{r_e}{r_r} ")
+        print(f"------|-----|-----")
+        print(f"      |{f_e}{f_r}|  ")
+        print(f"      |-----|     ")
+        print(f"      |{d_e}{d_r}|  ")
         print(f"       -----     ")
         print()
 

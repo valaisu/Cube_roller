@@ -89,6 +89,11 @@ class CubeGameGUI(ShowBase):
         self.unfolded_face_nodes = {}      # face_name -> NodePath for highlight
         self.unfolded_face_bounds = {}     # face_name -> (cx, cz, half_size) for hit testing
 
+        self.board_cursor = None           # (x, y) board position of keyboard cursor
+        self.viewing_enemy = False         # Q/W/E views enemy cubes when True
+        self._face_border_node = None      # yellow LineSegs border on selected face
+        self._board_cursor_node = None     # yellow tile highlight on board
+
         # Create scene
         self.setup_scene()
         self.setup_lighting()
@@ -159,6 +164,10 @@ class CubeGameGUI(ShowBase):
     def end_turn(self):
         """End current player's turn and switch to other player."""
         next_player = 2 if self.current_player == 1 else 1
+        self.board_cursor = None
+        self.viewing_enemy = False
+        if self._board_cursor_node:
+            self._board_cursor_node.hide()
         self.set_current_player(next_player)
         self.deselect_all()
         self.update_cube_counters(len(self.player1.cubes), len(self.player2.cubes))
@@ -182,7 +191,7 @@ class CubeGameGUI(ShowBase):
             for y in range(self.board_dim[1]):
                 square = self.loader.loadModel("../assets/white_square.obj")
                 square.setScale(1, 1, 1)
-                square.setPos((x - self.board_dim[0]/2) * 1.1, (y - self.board_dim[1]/2) * 1.1, 0)
+                square.setPos((x - self.board_dim[0]/2) * 1.1, (self.board_dim[1]/2 - y) * 1.1, 0)
                 square.setHpr(0, 90, 0)
 
                 # Color coding
@@ -202,12 +211,38 @@ class CubeGameGUI(ShowBase):
                 square.reparentTo(self.render)
                 self.board_tiles.append(square)
 
+        # Direction indicators just outside the board edges
+        # With negated Y: board y=0 ("up") is at world +Y, board y=max ("down") at world -Y
+        board_cx = 0
+        board_cy = (self.board_dim[1] / 2 - (self.board_dim[1] - 1) / 2) * 1.1  # center y
+        half_w = (self.board_dim[0] - 1) / 2 * 1.1
+        half_h = (self.board_dim[1] - 1) / 2 * 1.1
+        dir_labels = [
+            ('up',    (board_cx - 0.7,              half_h + 1.4, 0.05)),
+            ('down',  (board_cx - 0.7,             -half_h - 1.4, 0.05)),
+            ('left',  (-half_w - 1.2 - 0.6 - 0.55,  board_cy,     0.05)),
+            ('right', ( half_w + 1.2 - 0.6 + 0.55,  board_cy,     0.05)),
+        ]
+        for label, pos in dir_labels:
+            tn = TextNode(f'dir_{label}')
+            tn.setText(label)
+            tn.setAlign(TextNode.ACenter)
+            tn.setTextColor(1, 1, 0.3, 1)
+            np = self.render.attachNewNode(tn)
+            np.setPos(*pos)
+            np.setHpr(0, -90, 0)
+            np.setScale(0.6)
+
     def create_cube(self, board_x, board_y, cube_logic):
         """Create a 3D cube from a Cube logic object. Returns (cube_node, face_nodes)."""
         cube = self.render.attachNewNode("cube")
 
-        # Derive icon faces from cube logic
+        # Derive icon faces and rotations from cube logic
         icon_faces = self.cube_to_icon_list(cube_logic)
+        rot_dict = {
+            'top': cube_logic.u_rot, 'front': cube_logic.f_rot, 'bottom': cube_logic.d_rot,
+            'back': cube_logic.b_rot, 'left': cube_logic.l_rot, 'right': cube_logic.r_rot,
+        }
 
         # Load available icons
         icon_dict = {}
@@ -225,25 +260,30 @@ class CubeGameGUI(ShowBase):
         # size is half the cube's side length
         size = 0.4
 
-        # CardMaker creates cards in XY plane facing +Z
+        # CardMaker creates cards in XZ plane, normal along -Y.
+        # After H/P rotation the face's local Y = face outward normal,
+        # so setR() rotates around the outward normal (used for _rot).
         faces_config = [
             # (name, position, heading, pitch, roll)
-            ('top',    (0, 0, size),   0, -90, 180),
-            ('bottom', (0, 0, -size),  0,  90, 180),
-            ('front',  (0, size, 0),  180,   0,   0),
-            ('back',   (0, -size, 0),   0,   0, 180),
-            ('right',  (size, 0, 0),   90,   0, -90),
-            ('left',   (-size, 0, 0), -90,   0,  90),
-        ]
+            ('top',    (0, 0, size),   0, -90,  0),
+            ('bottom', (0, 0, -size),  0,  90,  0),
+            ('front',  (0, -size, 0),  0,   0,  0),
+            ('back',   (0,  size, 0),  180, 0,  180),
+            ('right',  (size,  0, 0),  90,  0,  90),
+            ('left',   (-size, 0, 0), -90,  0,  -90),
+        ]#                             z    y    x
 
         face_nodes = {}
+        face_base_r = {}
         for face_name, pos, h, p, r in faces_config:
             cm = CardMaker(f"face_{face_name}")
             cm.setFrame(-size, size, -size, size)
             face = cube.attachNewNode(cm.generate())
             face.setPos(*pos)
             face.setHpr(h, p, r)
+            face.setR(r + rot_dict.get(face_name, 0))
             face_nodes[face_name] = face
+            face_base_r[face_name] = r
 
             if face_name in icon_dict:
                 face.setTexture(icon_dict[face_name])
@@ -253,7 +293,7 @@ class CubeGameGUI(ShowBase):
 
         # Position cube on board
         world_x = (board_x - self.board_dim[0] / 2) * 1.1
-        world_y = (board_y - self.board_dim[1] / 2) * 1.1
+        world_y = (self.board_dim[1] / 2 - board_y) * 1.1
         cube.setPos(world_x, world_y, size + 0.05)
 
         # Add collision detection
@@ -261,12 +301,17 @@ class CubeGameGUI(ShowBase):
         cube.setTag('name', f'Cube ({board_x},{board_y})')
         cube.setTag('type', 'cube')
 
-        return cube, face_nodes
+        return cube, face_nodes, face_base_r
 
     def update_cube_face_textures(self, cube_data):
-        """Re-apply textures to face nodes based on current Cube logic state."""
-        icon_list = self.cube_to_icon_list(cube_data['logic'])
+        """Re-apply textures and rotations to face nodes based on current Cube logic state."""
+        cube = cube_data['logic']
+        icon_list = self.cube_to_icon_list(cube)
         icon_dict = {face: effect for effect, face in icon_list}
+        rot_dict = {
+            'top': cube.u_rot, 'front': cube.f_rot, 'bottom': cube.d_rot,
+            'back': cube.b_rot, 'left': cube.l_rot, 'right': cube.r_rot,
+        }
         for face_name, face_np in cube_data['face_nodes'].items():
             effect = icon_dict.get(face_name)
             if effect and effect != 'empty':
@@ -281,6 +326,8 @@ class CubeGameGUI(ShowBase):
             else:
                 face_np.clearTexture()
                 face_np.setColor(0.6, 0.6, 0.7, 1)
+            base_r = cube_data.get('face_base_r', {}).get(face_name, 0)
+            face_np.setR(base_r + rot_dict.get(face_name, 0))
 
     def add_collision(self, node, name):
         """Add collision detection to an object"""
@@ -300,7 +347,7 @@ class CubeGameGUI(ShowBase):
         node = cube_data['node']
         dx, dy = dir_to_coords[direction]
         world_dx = dx * 1.1
-        world_dy = dy * 1.1
+        world_dy = -dy * 1.1
 
         cur_pos = node.getPos()
         target_pos = Point3(cur_pos.x + world_dx, cur_pos.y + world_dy, cur_pos.z)
@@ -308,10 +355,10 @@ class CubeGameGUI(ShowBase):
         # HPR deltas for a 90° roll in each direction.
         # right/left roll around Y axis (R), up/down roll around X axis (P).
         hpr_deltas = {
-            'right': (0,   0, -90),
-            'left':  (0,   0,  90),
-            'down':  (0, -90,   0),
-            'up':    (0,  90,   0),
+            'right': (0,   0,  90),
+            'left':  (0,   0, -90),
+            'down':  (0,  90,   0),
+            'up':    (0, -90,   0),
         }
         dh, dp, dr = hpr_deltas[direction]
         cur_hpr = node.getHpr()
@@ -359,14 +406,212 @@ class CubeGameGUI(ShowBase):
         self.accept('mouse1', self.on_mouse_click)
         self.accept('escape', sys.exit)
         self.accept('control-s', self._save_game_record)
-        self.accept('r', self.reset_camera)
-        self.accept('arrow_left', self.rotate_left)
-        self.accept('arrow_right', self.rotate_right)
-        self.accept('arrow_up', self.rotate_up)
-        self.accept('arrow_down', self.rotate_down)
+
+        # Camera: Shift+Arrow rotates, +/- zooms
+        self.accept('shift-arrow_left',  lambda: self.on_shift_arrow('left'))
+        self.accept('shift-arrow_right', lambda: self.on_shift_arrow('right'))
+        self.accept('shift-arrow_up',    lambda: self.on_shift_arrow('up'))
+        self.accept('shift-arrow_down',  lambda: self.on_shift_arrow('down'))
         self.accept('+', self.zoom_in)
         self.accept('-', self.zoom_out)
         self.accept('=', self.zoom_in)
+
+        # Arrow keys: context-sensitive (board nav / roll dir / effect rotation)
+        self.accept('arrow_left',  lambda: self.on_arrow_key('left'))
+        self.accept('arrow_right', lambda: self.on_arrow_key('right'))
+        self.accept('arrow_up',    lambda: self.on_arrow_key('up'))
+        self.accept('arrow_down',  lambda: self.on_arrow_key('down'))
+
+        # Under-construction cube slots
+        self.accept('q', lambda: self.on_slot_key(0))
+        self.accept('w', lambda: self.on_slot_key(1))
+        self.accept('e', lambda: self.on_slot_key(2))
+
+        # Space: toggle viewing enemy cubes
+        self.accept('space', self.on_space_key)
+
+        # Action buttons: R=Roll, B=Build, A=AddSide, D=Deploy
+        self.accept('r', lambda: self.on_action_key('roll'))
+        self.accept('b', lambda: self.on_action_key('build'))
+        self.accept('a', lambda: self.on_action_key('add_side'))
+        self.accept('d', lambda: self.on_action_key('deploy'))
+
+        # OK and Cancel
+        self.accept('o', self.on_ok_key)
+        self.accept('c', self.on_cancel_key)
+
+        # Effect selection: 1-9 = effects[0-8], 0 = effects[9]
+        for i in range(1, 10):
+            self.accept(str(i), lambda n=i - 1: self.on_effect_number_key(n))
+        self.accept('0', lambda: self.on_effect_number_key(9))
+
+    # ─── Keyboard Handlers ───────────────────────────────────────────────────
+
+    def on_arrow_key(self, direction):
+        if self.playback_mode:
+            return
+        if not self.add_side_menu.isHidden():
+            # Rotate effect direction CW/CCW with left/right
+            if direction == 'right':
+                self.on_effect_button_click('rotate_cw')
+            elif direction == 'left':
+                self.on_effect_button_click('rotate_ccw')
+        elif not self.roll_menu.isHidden():
+            self.on_roll_button_click(direction)
+        else:
+            self._navigate_board(direction)
+
+    def on_shift_arrow(self, direction):
+        if self.playback_mode:
+            return
+        if not self.add_side_menu.isHidden():
+            self._navigate_face(direction)
+        else:
+            {'left': self.rotate_left, 'right': self.rotate_right,
+             'up': self.rotate_up, 'down': self.rotate_down}[direction]()
+
+    def on_ok_key(self):
+        if self.playback_mode:
+            return
+        if not self.roll_menu.isHidden():
+            self.on_roll_button_click('confirm')
+        elif not self.add_side_menu.isHidden():
+            self.on_effect_button_click('confirm')
+        elif self.deploy_mode and self.board_cursor:
+            self._handle_deploy_click(*self.board_cursor)
+        else:
+            self.on_end_turn()
+
+    def on_cancel_key(self):
+        if self.playback_mode:
+            return
+        if not self.roll_menu.isHidden():
+            self.on_roll_button_click('cancel')
+        elif not self.add_side_menu.isHidden():
+            self.on_effect_button_click('cancel')
+        else:
+            self.deselect_all()
+
+    def on_slot_key(self, index):
+        if self.playback_mode:
+            return
+        if self.viewing_enemy:
+            enemy = self.player2 if self.current_player == 1 else self.player1
+            open_slots = self.player2_open_slots if self.current_player == 1 else self.player1_open_slots
+            if index < open_slots and index < len(enemy.cubes):
+                self.display_unfolded_cube({'logic': enemy.cubes[index]})
+                self.info_label['text'] = f"Enemy cube {index + 1} (read-only)"
+        else:
+            own = 'p1' if self.current_player == 1 else 'p2'
+            self.on_select_cube(own, index)
+
+    def on_space_key(self):
+        if self.playback_mode:
+            return
+        self.viewing_enemy = not self.viewing_enemy
+        if self.viewing_enemy:
+            self.info_label['text'] = "Viewing enemy cubes (read-only)"
+        else:
+            self.info_label['text'] = f"Player {self.current_player}'s turn"
+
+    def on_action_key(self, action):
+        if self.playback_mode:
+            return
+        if action == 'roll':
+            self.on_roll_cube()
+        elif action == 'build':
+            self.on_build_cube()
+        elif action == 'add_side':
+            self.on_add_side()
+        elif action == 'deploy':
+            self.on_deploy_cube()
+
+    def on_effect_number_key(self, idx):
+        if self.playback_mode:
+            return
+        if not self.add_side_menu.isHidden() and 0 <= idx < len(self.effects):
+            self.on_effect_button_click(self.effects[idx])
+
+    def _navigate_board(self, direction):
+        dx, dy = dir_to_coords[direction]
+        player = self.player1 if self.current_player == 1 else self.player2
+        deployed = [(c.x, c.y) for c in player.cubes
+                    if not c.under_construction and not c.destroyed]
+        if not deployed:
+            return
+        if self.board_cursor is None:
+            self.board_cursor = deployed[0]
+        else:
+            cx, cy = self.board_cursor
+            nx, ny = cx + dx, cy + dy
+            if 0 <= nx < self.board.width and 0 <= ny < self.board.height:
+                self.board_cursor = (nx, ny)
+        self._update_board_cursor()
+
+    def _update_board_cursor(self):
+        if self.board_cursor is None:
+            if self._board_cursor_node:
+                self._board_cursor_node.hide()
+            return
+        x, y = self.board_cursor
+        world_x = (x - self.board_dim[0] / 2) * 1.1
+        world_y = (self.board_dim[1] / 2 - y) * 1.1
+        if self._board_cursor_node is None:
+            cm = CardMaker('board_cursor')
+            cm.setFrame(-0.5, 0.5, -0.5, 0.5)
+            self._board_cursor_node = self.render.attachNewNode(cm.generate())
+            self._board_cursor_node.setHpr(0, -90, 0)
+            self._board_cursor_node.setColor(1, 1, 0, 0.35)
+            self._board_cursor_node.setTransparency(TransparencyAttrib.MAlpha)
+        self._board_cursor_node.setPos(world_x, world_y, 0.02)
+        self._board_cursor_node.show()
+        # Select cube at cursor if it belongs to current player
+        player = self.player1 if self.current_player == 1 else self.player2
+        cell = self.board.grid[y][x]
+        if isinstance(cell, Cube) and cell.owner == player.name:
+            for cube_data in self.cubes:
+                if cube_data['board_pos'] == (x, y):
+                    self.select_cube(cube_data['node'])
+                    break
+        else:
+            self.deselect_cube()
+
+    def _navigate_face(self, direction):
+        FACE_NAV = {
+            'back':   {'up': None,    'down': 'top',   'left': None,  'right': None},
+            'top':    {'up': 'back',  'down': 'front', 'left': 'left','right': 'right'},
+            'front':  {'up': 'top',   'down': 'bottom','left': None,  'right': None},
+            'bottom': {'up': 'front', 'down': None,    'left': None,  'right': None},
+            'left':   {'up': None,    'down': None,    'left': None,  'right': 'top'},
+            'right':  {'up': None,    'down': None,    'left': 'top', 'right': None},
+        }
+        if self.selected_face is None:
+            self.on_face_card_click('top')
+            return
+        next_face = FACE_NAV.get(self.selected_face, {}).get(direction)
+        if next_face:
+            self.on_face_card_click(next_face)
+
+    def _show_face_border(self, face_name):
+        self._hide_face_border()
+        if face_name not in self.unfolded_face_nodes or face_name not in self.unfolded_face_bounds:
+            return
+        face_np = self.unfolded_face_nodes[face_name]
+        half = self.unfolded_face_bounds[face_name][2]
+        ls = LineSegs()
+        ls.setThickness(3)
+        ls.setColor(1, 1, 0, 1)
+        ls.moveTo(-half, 0, -half)
+        ls.drawTo( half, 0, -half)
+        ls.drawTo( half, 0,  half)
+        ls.drawTo(-half, 0,  half)
+        ls.drawTo(-half, 0, -half)
+        self._face_border_node = face_np.attachNewNode(ls.create())
+
+    def _hide_face_border(self):
+        if self._face_border_node:
+            self._face_border_node.removeNode()
+            self._face_border_node = None
 
     # ─── UI ──────────────────────────────────────────────────────────────────
 
@@ -694,7 +939,7 @@ class CubeGameGUI(ShowBase):
                 world_x = p_from.x + t * p_dir.x
                 world_y = p_from.y + t * p_dir.y
                 grid_x = int(round(world_x / 1.1 + self.board_dim[0] / 2))
-                grid_y = int(round(world_y / 1.1 + self.board_dim[1] / 2))
+                grid_y = int(round(self.board_dim[1] / 2 - world_y / 1.1))
                 self._handle_deploy_click(grid_x, grid_y)
             return
 
@@ -736,9 +981,9 @@ class CubeGameGUI(ShowBase):
             cube.roll((0, 1))
             cube.roll((0, 1))
         elif cube.l.effect == 'start':
-            cube.rotate('ccw')
+            cube.roll((-1, 0))
         elif cube.r.effect == 'start':
-            cube.rotate('cw')
+            cube.roll((1, 0))
 
     def _handle_deploy_click(self, grid_x, grid_y):
         """Process a board click while in deploy mode."""
@@ -750,12 +995,13 @@ class CubeGameGUI(ShowBase):
                     self._orient_cube_for_deploy(player.cubes[cube_idx])
                     player.deploy_cube(cube_idx, grid_x, grid_y)
                     cube_logic = player.cubes[cube_idx]
-                    cube_node, face_nodes = self.create_cube(grid_x, grid_y, cube_logic)
+                    cube_node, face_nodes, face_base_r = self.create_cube(grid_x, grid_y, cube_logic)
                     self.cubes.append({
                         'node': cube_node,
                         'board_pos': (grid_x, grid_y),
                         'logic': cube_logic,
                         'face_nodes': face_nodes,
+                        'face_base_r': face_base_r,
                     })
                     self.deploy_mode = False
                     self.deploy_cube_index = None
@@ -787,6 +1033,7 @@ class CubeGameGUI(ShowBase):
         if cube_data:
             self.info_label['text'] = f"Selected: {name}"
             self.display_unfolded_cube(cube_data)
+            cube_data['logic'].debug_unravel()
         else:
             self.info_label['text'] = name
         self._update_action_buttons()
@@ -923,8 +1170,8 @@ class CubeGameGUI(ShowBase):
         fs = 0.08 * scale
         container_z = slot_z + 0.5 * fs
         face_centers = {
-            'top':    (slot_x,      container_z),
             'back':   (slot_x,      container_z + fs),
+            'top':    (slot_x,      container_z),
             'front':  (slot_x,      container_z - fs),
             'bottom': (slot_x,      container_z - 2 * fs),
             'left':   (slot_x - fs, container_z),
@@ -946,6 +1193,7 @@ class CubeGameGUI(ShowBase):
 
     def _restore_face_to_base(self, face_name):
         """Restore an unfolded face card to its cube-data appearance (remove preview)."""
+        self._hide_face_border()
         if face_name not in self.unfolded_face_nodes:
             return
         node = self.unfolded_face_nodes[face_name]
@@ -981,6 +1229,7 @@ class CubeGameGUI(ShowBase):
             self.selected_face = face_name
             if face_name in self.unfolded_face_nodes:
                 self.unfolded_face_nodes[face_name].setColor(0.9, 0.9, 0.3, 1)
+            self._show_face_border(face_name)
             self.info_label['text'] = f"Face: {face_name}"
             self._update_build_preview()
 
@@ -999,7 +1248,7 @@ class CubeGameGUI(ShowBase):
         except Exception:
             face_node.setColor(0.9, 0.9, 0.3, 1)
         # Spin the card to show the effect direction
-        face_node.setR(getattr(self, 'selected_rotation_deg', 0))
+        face_node.setR(-getattr(self, 'selected_rotation_deg', 0) % 360)
 
     def _undo_build_rotations(self):
         """Reset build-mode preview state (called on cancel / deselect)."""
@@ -1050,12 +1299,12 @@ class CubeGameGUI(ShowBase):
         #     [bottom]
         z_offset = face_size / 2
         face_positions = {
-            'top':    (0,           0, z_offset),
             'back':   (0,           0, face_size + z_offset),
+            'top':    (0,           0, z_offset),
+            'front':  (0,           0, -face_size + z_offset),
             'bottom': (0,           0, -2 * face_size + z_offset),
             'left':   (-face_size,  0, z_offset),
             'right':  (face_size,   0, z_offset),
-            'front':  (0,           0, -face_size + z_offset),
         }
 
         for face_name, (x, y, z) in face_positions.items():
@@ -1097,12 +1346,12 @@ class CubeGameGUI(ShowBase):
         face_size = 0.08 * scale
 
         face_positions = {
-            'top':    (0,          0, 0),
             'back':   (0,          0, face_size),
+            'top':    (0,          0, 0),
+            'front':  (0,          0, -face_size),
             'bottom': (0,          0, -2 * face_size),
             'left':   (-face_size, 0, 0),
             'right':  (face_size,  0, 0),
-            'front':  (0,          0, -face_size),
         }
 
         icon_dict = {}
@@ -1386,7 +1635,7 @@ class CubeGameGUI(ShowBase):
     def setup_add_side_menu(self):
         """Setup the add side menu (initially hidden)"""
         self.effects = ["slide", "push", "fortify", "grapple", "detonate",
-                        "start", "rotate", "strength", "build", "slash"]
+                        "start", "rotate", "power", "build", "slash"]
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
         icons_dir = os.path.join(script_dir, "..", "assets", "icons")
@@ -1691,7 +1940,7 @@ class CubeGameGUI(ShowBase):
         z = self.camera_distance * math.sin(rad_p)
 
         self.camera.setPos(x, y, z)
-        self.camera.lookAt(0, 0, 0)
+        self.camera.lookAt(-1.1, 0, 0)
 
         lens = self.cam.node().getLens()
         lens.setFilmOffset(0, 0)
@@ -1930,12 +2179,13 @@ class CubeGameGUI(ShowBase):
             self._orient_cube_for_deploy(player.cubes[idx])
             player.deploy_cube(idx, move.pos_x, move.pos_y)
             cube_logic = player.cubes[idx]
-            cube_node, face_nodes = self.create_cube(move.pos_x, move.pos_y, cube_logic)
+            cube_node, face_nodes, face_base_r = self.create_cube(move.pos_x, move.pos_y, cube_logic)
             self.cubes.append({
                 'node': cube_node,
                 'board_pos': (move.pos_x, move.pos_y),
                 'logic': cube_logic,
                 'face_nodes': face_nodes,
+                'face_base_r': face_base_r,
             })
 
         elif move.move_type == 'roll':
@@ -1947,7 +2197,7 @@ class CubeGameGUI(ShowBase):
             if cube_data:
                 cube_data['board_pos'] = (new_x, new_y)
                 world_x = (new_x - self.board_dim[0] / 2) * 1.1
-                world_y = (new_y - self.board_dim[1] / 2) * 1.1
+                world_y = (self.board_dim[1] / 2 - new_y) * 1.1
                 cube_data['node'].setPos(world_x, world_y, 0.45)
                 self.update_cube_face_textures(cube_data)
 
